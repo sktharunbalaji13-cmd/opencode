@@ -15,8 +15,8 @@ const stats: SessionStatsInfo = {
   tools: { mode: "none" },
   models: [],
   activity: [
-    { date: "2026-01-01", steps: 1 },
-    { date: "2026-01-02", steps: 50 },
+    { date: "2026-01-01", steps: 1, tokens: { input: 1, output: 2, reasoning: 3, cache: { read: 4, write: 5 } } },
+    { date: "2026-01-02", steps: 50, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } },
   ],
 }
 

@@ -1,0 +1,397 @@
+import { Plugin } from "@opencode/plugin/tui"
+import type { SessionInfo, SessionStatsInfo } from "@opencode/client"
+import { TokenUsage } from "@opencode/schema/token-usage"
+import { withTimestampedFallback } from "@opencode/util/session-title-fallback"
+import {
+  formatDayLabel,
+  lastLocalDays,
+  localTimezone,
+  millisecondsUntilNextLocalMidnight,
+  startOfLocalDay,
+  startOfLocalMonth,
+  startOfLocalWeek,
+} from "@opencode/util/usage-periods"
+import { useTerminalDimensions } from "@opentui/solid"
+import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js"
+import { Locale } from "../../util/locale"
+import { statsNumber } from "../system/stats-data"
+
+/**
+ * Token usage dashboard.
+ *
+ * Totals and request counts come from `session.stats`, which recomputes them from the
+ * authoritative session/message rows on every call. Events are treated purely as
+ * invalidation signals, so a dropped SSE frame or a duplicate delivery can never inflate
+ * a counter: the only thing an event does is schedule a fresh read.
+ *
+ * Known upstream semantics this surface inherits rather than corrects:
+ * - `stats.tokens` omits compaction usage on default local installs (the durable event log
+ *   is not persisted) and always omits title usage.
+ * - `session_v2.tokens_*` can disagree with message totals after revert, fork, or retry.
+ * - Aggregation does not clamp negative token leaves, so display floors at zero.
+ */
+
+const SETTLE_MS = 150
+const DAY_COUNT = 7
+const MAX_SESSIONS = 4
+const SESSION_LIST_LIMIT = 50
+const BAR_WIDTH = 14
+const BAR_GLYPHS = ["·", "░", "▒", "▓", "█"]
+
+// The sidebar is 42 columns wide with 2 columns of padding and 1 reserved for the
+// scrollbar, leaving 37. Every table below is sized to fit that without wrapping.
+const PERIOD_WIDTH = 21
+const PERIOD_VALUE_WIDTH = 8
+const PERIOD_REQUEST_WIDTH = 6
+const SESSION_NAME_WIDTH = 14
+const SESSION_VALUE_WIDTH = 7
+const SESSION_REQUEST_WIDTH = 5
+const SESSION_STATUS_WIDTH = 5
+const DAY_LABEL_WIDTH = 7
+const DAY_VALUE_WIDTH = 8
+
+type Tokens = TokenUsage.Info
+
+/** Session and period totals, floored because aggregation can surface negative leaves. */
+export function usageTotal(tokens: Tokens | undefined) {
+  if (!tokens) return 0
+  return Math.max(0, TokenUsage.total(tokens))
+}
+
+/**
+ * Horizontal bar scaled against the largest value in the displayed range. Length carries
+ * the magnitude; the glyph shade carries the fill depth so short bars stay legible.
+ */
+export function bar(value: number, max: number, width = BAR_WIDTH) {
+  if (!(value > 0) || !(max > 0)) return ""
+  const ratio = Math.min(1, value / max)
+  const filled = Math.max(1, Math.round(ratio * width))
+  const shade = BAR_GLYPHS[Math.max(0, Math.ceil(ratio * BAR_GLYPHS.length) - 1)]
+  return (shade ?? BAR_GLYPHS[0]).repeat(filled)
+}
+
+export function statusLabel(status: "idle" | "running", outcome: SessionInfo["outcome"]) {
+  if (status === "running") return "RUN"
+  if (outcome === "succeeded") return "DONE"
+  if (outcome === "failed") return "FAIL"
+  if (outcome === "interrupted") return "STOP"
+  return "IDLE"
+}
+
+export type SessionRow = {
+  id: string
+  name: string
+  tokens: number
+  steps: number | undefined
+  running: boolean
+  status: string
+}
+
+export function selectSessions(input: {
+  sessions: readonly SessionInfo[]
+  status: (sessionID: string) => "idle" | "running"
+  limit?: number
+}) {
+  const rows = input.sessions
+    .map((info) => {
+      const status = input.status(info.id)
+      return {
+        id: info.id,
+        name: withTimestampedFallback(info),
+        tokens: usageTotal(info.tokens),
+        steps: info.steps,
+        updated: info.time.updated,
+        running: status === "running",
+        status: statusLabel(status, info.outcome),
+      }
+    })
+    // A session with no tokens and no live work carries no signal worth a row.
+    .filter((row) => row.running || row.tokens > 0)
+    .toSorted(
+      (a, b) => Number(b.running) - Number(a.running) || b.tokens - a.tokens || b.updated - a.updated,
+    )
+  const limit = input.limit ?? MAX_SESSIONS
+  return { rows: rows.slice(0, limit), total: rows.length, overflow: Math.max(0, rows.length - limit) }
+}
+
+export type DayRow = { key: string; label: string; tokens: number }
+
+export function dayRows(activity: readonly { date: string; tokens?: Tokens }[] | undefined, now: number) {
+  const byKey = new Map((activity ?? []).map((entry) => [entry.date, entry]))
+  return lastLocalDays(now, DAY_COUNT).map((period) => ({
+    key: period.key,
+    label: formatDayLabel(period.key),
+    tokens: usageTotal(byKey.get(period.key)?.tokens),
+  }))
+}
+
+/** A period's request count, grouped for readability. */
+export function formatRequests(steps: number | undefined) {
+  if (steps === undefined) return "-"
+  return steps.toLocaleString("en-US")
+}
+
+/**
+ * A session's request count. Session counts are small, so compact notation is identical to
+ * the plain value while still guaranteeing the cell cannot push the row past the panel.
+ */
+export function formatSessionRequests(steps: number | undefined) {
+  if (steps === undefined) return "-"
+  return statsNumber(steps)
+}
+
+/**
+ * The `SESSION | TOKENS | REQUESTS` cells of a session row. Kept separate from the status
+ * cell so only the status indicator carries the status colour, matching the sidebar style
+ * used by the MCP section where the name and values stay muted.
+ */
+export function formatSessionCells(row: { name: string; tokens: number; steps?: number }) {
+  // padEnd does not shorten an overlong title, so clip it or the row wraps the panel.
+  const name = Locale.truncateWidth(row.name, SESSION_NAME_WIDTH)
+  return `${name.padEnd(SESSION_NAME_WIDTH)}${statsNumber(row.tokens).padStart(
+    SESSION_VALUE_WIDTH,
+  )}  ${formatSessionRequests(row.steps).padStart(SESSION_REQUEST_WIDTH)}`
+}
+
+/** The trailing status cell, padded to the sidebar width. */
+export function formatSessionStatus(status: string) {
+  return `  ${status.padStart(SESSION_STATUS_WIDTH)}`
+}
+
+/**
+ * One `SESSION | TOKENS | REQUESTS | STATUS` line. The leading status dot is rendered as a
+ * separate coloured span, so this returns everything after it and the caller prefixes two
+ * columns. With the dot that is 37 columns, matching SESSION_SIDEBAR_WIDTH.
+ */
+export function formatSessionRow(row: { name: string; tokens: number; steps?: number; status: string }) {
+  return `${formatSessionCells(row)}${formatSessionStatus(row.status)}`
+}
+
+/**
+ * The panel footer. `ACTIVE` counts the sessions actually listed, which is what the panel
+ * shows, rather than only the ones currently running.
+ */
+export function formatSessionsFooter(shown: number, totalTokens: number) {
+  return `${`ACTIVE: ${shown}`.padEnd(22)}${`TOTAL: ${statsNumber(totalTokens)}`.padStart(15)}`
+}
+
+/** One `PERIOD · range | TOKENS | REQUESTS` line, padded to the sidebar width. */
+export function formatPeriodRow(label: string, stats: SessionStatsInfo | undefined) {
+  const tokens = statsNumber(usageTotal(stats?.tokens)).padStart(PERIOD_VALUE_WIDTH)
+  const requests = formatRequests(stats?.steps).padStart(PERIOD_REQUEST_WIDTH)
+  return `${label.padEnd(PERIOD_WIDTH)}${tokens}  ${requests}`
+}
+
+/** One `DAY | bar | TOKENS` line. The bar scales against `max` from the same range. */
+export function formatDayRow(day: DayRow, max: number) {
+  return `${day.label.padEnd(DAY_LABEL_WIDTH)}${bar(day.tokens, max).padEnd(BAR_WIDTH)}  ${statsNumber(day.tokens).padStart(
+    DAY_VALUE_WIDTH,
+  )}`
+}
+
+/** `TODAY · 02 OCT 2026`, sized to the 21-column period cell. */
+export function periodLabel(name: string, from: number, to: number) {
+  const today = startOfLocalDay(to)
+  if (from === today) return `${name} · ${formatDayKey(today, true)}`
+  const right = formatDayKey(to)
+  // Inside one month the left bound only needs its day number.
+  if (from >= startOfLocalMonth(to)) return `${name} · ${dayNumber(from)}–${right}`
+  return `${name} · ${formatDayKey(from)}–${right}`
+}
+
+function dayNumber(time: number) {
+  return `${new Date(time).getDate()}`.padStart(2, "0")
+}
+
+function monthOf(date: Date) {
+  return new Intl.DateTimeFormat("en-US", { month: "short" }).format(date)
+}
+
+function formatDayKey(time: number, withYear = false) {
+  const date = new Date(time)
+  const day = `${date.getDate()}`.padStart(2, "0")
+  const month = monthOf(date).toUpperCase()
+  return withYear ? `${day} ${month} ${date.getFullYear()}` : `${day} ${month}`
+}
+
+type Snapshot = {
+  today?: SessionStatsInfo
+  week?: SessionStatsInfo
+  month?: SessionStatsInfo
+  days?: SessionStatsInfo
+  sessions: SessionInfo[]
+}
+
+export function TokenUsageDashboard(props: { context: Plugin.Context; sessionID: string }) {
+  const context = props.context
+  const theme = context.theme
+  const dimensions = useTerminalDimensions()
+  const [snapshot, setSnapshot] = createSignal<Snapshot>({ sessions: [] })
+
+  // A fresh read of every authoritative aggregate. Never a delta from an event.
+  async function reconcile() {
+    const now = Date.now()
+    const timezone = localTimezone()
+    const weekStart = startOfLocalWeek(now)
+    const days = lastLocalDays(now, DAY_COUNT)
+    const options = { to: now, timezone, tools: "none" as const }
+    try {
+      const [today, week, month, history, sessions] = await Promise.all([
+        context.client.session.stats({ ...options, from: startOfLocalDay(now) }),
+        context.client.session.stats({ ...options, from: weekStart }),
+        context.client.session.stats({ ...options, from: startOfLocalMonth(now) }),
+        context.client.session.stats({ ...options, from: days[0]?.from ?? weekStart }),
+        context.client.session.list({ limit: SESSION_LIST_LIMIT, order: "desc" }),
+      ])
+      setSnapshot({ today, week, month, days: history, sessions: sessions.data ?? [] })
+    } catch (error) {
+      // A failed reconcile keeps the previous snapshot; the next event retries.
+      console.error("Failed to reconcile token usage dashboard", error)
+    }
+  }
+
+  let settleTimer: ReturnType<typeof setTimeout> | undefined
+  const settle = () => {
+    if (settleTimer) return
+    settleTimer = setTimeout(() => {
+      settleTimer = undefined
+      void reconcile()
+    }, SETTLE_MS)
+  }
+
+  let midnightTimer: ReturnType<typeof setTimeout> | undefined
+  const scheduleMidnight = () => {
+    if (midnightTimer) clearTimeout(midnightTimer)
+    midnightTimer = setTimeout(
+      () => {
+        scheduleMidnight()
+        void reconcile()
+      },
+      millisecondsUntilNextLocalMidnight(Date.now()),
+    )
+  }
+
+  onMount(() => {
+    void reconcile()
+    scheduleMidnight()
+    // Usage arriving, and session lifecycle changing, both only mark the snapshot stale.
+    const unsubscribes = [
+      context.data.on("session.step.ended", settle),
+      context.data.on("session.step.failed", settle),
+      context.data.on("session.usage.updated", settle),
+      context.data.on("session.created", settle),
+      context.data.on("session.deleted", settle),
+      context.data.on("session.execution.started", settle),
+      context.data.on("session.execution.succeeded", settle),
+      context.data.on("session.execution.failed", settle),
+      context.data.on("session.execution.interrupted", settle),
+    ]
+    // The event stream is volatile by contract, so a reconnect can drop frames that were
+    // never delivered. `data.listen` is the raw emitter and still carries `server.connected`,
+    // which the typed `useEvent` helper filters out, so it is the only reconnect signal here.
+    unsubscribes.push(
+      context.data.listen(({ details }) => {
+        if (details.type === "server.connected") void reconcile()
+      }),
+    )
+    onCleanup(() => {
+      for (const unsubscribe of unsubscribes) unsubscribe()
+    })
+  })
+  onCleanup(() => {
+    if (settleTimer) clearTimeout(settleTimer)
+    if (midnightTimer) clearTimeout(midnightTimer)
+  })
+
+  const now = () => Date.now()
+
+  const compact = createMemo(() => dimensions().height < 26)
+  const sessionLimit = createMemo(() => (dimensions().height < 34 ? 2 : MAX_SESSIONS))
+
+  const sessions = createMemo(() => {
+    const state = snapshot()
+    return selectSessions({
+      sessions: state.sessions,
+      status: (sessionID) => context.data.session.status(sessionID),
+      limit: sessionLimit(),
+    })
+  })
+
+  const days = createMemo(() => dayRows(snapshot().days?.activity, now()))
+  const dayMax = createMemo(() => days().reduce((max, day) => Math.max(max, day.tokens), 0))
+
+  const periods = createMemo(() => {
+    const state = snapshot()
+    const at = now()
+    return [
+      { label: periodLabel("TODAY", startOfLocalDay(at), at), stats: state.today },
+      { label: periodLabel("WEEK", startOfLocalWeek(at), at), stats: state.week },
+      { label: periodLabel("MONTH", startOfLocalMonth(at), at), stats: state.month },
+    ]
+  })
+
+  const sessionsTotal = createMemo(() => sessions().rows.reduce((sum, row) => sum + row.tokens, 0))
+
+  return (
+    <box>
+      <text fg={theme.text.base}>
+        <b>Token usage</b>
+      </text>
+      <Show when={snapshot().today}>
+        <text fg={theme.text.muted}>
+          {`${"PERIOD".padEnd(PERIOD_WIDTH)}${"TOKENS".padStart(PERIOD_VALUE_WIDTH)}  ${"REQUESTS".padStart(
+            PERIOD_REQUEST_WIDTH,
+          )}`}
+        </text>
+        <For each={periods()}>
+          {(period) => <text fg={theme.text.muted}>{formatPeriodRow(period.label, period.stats)}</text>}
+        </For>
+      </Show>
+
+      <Show when={sessions().rows.length > 0}>
+        <text fg={theme.text.base}>
+          <b>Active sessions</b>
+        </text>
+        <text fg={theme.text.muted}>
+          {`  ${"SESSION".padEnd(SESSION_NAME_WIDTH)}${"TOKENS".padStart(SESSION_VALUE_WIDTH)}  ${"REQUESTS".padStart(
+            SESSION_REQUEST_WIDTH,
+          )}  ${"STATUS".padStart(SESSION_STATUS_WIDTH)}`}
+        </text>
+        <For each={sessions().rows}>
+          {(row) => (
+            <text fg={theme.text.muted}>
+              <span style={{ fg: row.running ? theme.text.feedback.success.base : theme.text.muted }}>• </span>
+              {formatSessionCells(row)}
+              <span style={{ fg: row.running ? theme.text.feedback.success.base : theme.text.muted }}>
+                {formatSessionStatus(row.status)}
+              </span>
+            </text>
+          )}
+        </For>
+        <text fg={theme.text.muted}>{formatSessionsFooter(sessions().rows.length, sessionsTotal())}</text>
+        <Show when={sessions().overflow > 0}>
+          <text fg={theme.text.muted}>{`+${sessions().overflow} more`}</text>
+        </Show>
+      </Show>
+
+      <Show when={!compact()}>
+        <text fg={theme.text.base}>
+          <b>Last 7 days</b>
+        </text>
+        <For each={days()}>
+          {(day) => <text fg={theme.text.muted}>{formatDayRow(day, dayMax())}</text>}
+        </For>
+      </Show>
+    </box>
+  )
+}
+
+export default Plugin.define({
+  id: "opencode.sidebar.token-usage",
+  setup(context) {
+    context.ui.slot({
+      append: "sidebar.content",
+      render: (props) => <TokenUsageDashboard context={context} sessionID={props.sessionID} />,
+    })
+  },
+})

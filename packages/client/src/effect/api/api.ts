@@ -181,7 +181,16 @@ export type SessionStatsOutput = {
       }
   readonly activeDays: number
   readonly streak: number
-  readonly activity: ReadonlyArray<{ readonly date: string; readonly steps: number }>
+  readonly activity: ReadonlyArray<{
+    readonly date: string
+    readonly steps: number
+    readonly tokens: {
+      readonly input: number
+      readonly output: number
+      readonly reasoning: number
+      readonly cache: { readonly read: number; readonly write: number }
+    }
+  }>
   readonly models: ReadonlyArray<{
     readonly model: Model.Ref
     readonly steps: number

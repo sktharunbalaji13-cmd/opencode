@@ -9,6 +9,8 @@ import { TokenUsage } from "./token-usage.js"
 export const Activity = Schema.Struct({
   date: Schema.String,
   steps: NonNegativeInt,
+  /** Tokens consumed on this local day. Totals follow TokenUsage.total: every field is non-overlapping. */
+  tokens: TokenUsage.Info,
 }).annotate({ identifier: "SessionStats.Activity" })
 export type Activity = typeof Activity.Type
 

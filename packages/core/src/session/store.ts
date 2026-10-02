@@ -14,6 +14,25 @@ import { Session } from "@opencode/schema/session"
 import { SessionMessageTable, SessionTable } from "./sql.js"
 import { fromRow } from "./info.js"
 
+/**
+ * Model requests per session, counted with the same semantics as `SessionStats.steps`: one
+ * assistant message is one request, and messages copied in from a fork boundary are
+ * excluded so a fork never double-counts its parent. This reads only the
+ * (session_id, type, seq) index and never touches the message body, so it is cheap enough
+ * to fold into the session listing as a correlated subquery instead of costing a query per
+ * session.
+ */
+const stepsPerSession = sql<number>`(
+  SELECT count(*)
+  FROM ${SessionMessageTable}
+  WHERE ${SessionMessageTable.session_id} = ${SessionTable.id}
+    AND ${SessionMessageTable.type} = 'assistant'
+    AND (
+      ${SessionTable.fork_session_id} IS NULL
+      OR ${SessionMessageTable.time_created} >= ${SessionTable.time_created}
+    )
+)`
+
 const ListInputBase = {
   workspaceID: Workspace.ID.pipe(Schema.optional),
   search: Schema.String.pipe(Schema.optional),
@@ -93,8 +112,13 @@ const layer = Layer.effect(
 
     return Service.of({
       get: Effect.fnUntraced(function* (sessionID) {
-        const row = yield* db.select().from(SessionTable).where(eq(SessionTable.id, sessionID)).get().pipe(Effect.orDie)
-        return row ? fromRow(row) : undefined
+        const row = yield* db
+          .select({ info: SessionTable, steps: stepsPerSession })
+          .from(SessionTable)
+          .where(eq(SessionTable.id, sessionID))
+          .get()
+          .pipe(Effect.orDie)
+        return row ? fromRow(row.info, row.steps) : undefined
       }),
       list: Effect.fn("SessionStore.list")(function* (input = {}) {
         const direction = input.anchor?.direction ?? "next"
@@ -125,7 +149,7 @@ const layer = Layer.effect(
           )
         }
         const query = db
-          .select()
+          .select({ info: SessionTable, steps: stepsPerSession })
           .from(SessionTable)
           .where(conditions.length > 0 ? and(...conditions) : undefined)
           .orderBy(
@@ -135,7 +159,8 @@ const layer = Layer.effect(
         const rows = yield* (input.limit === undefined ? query.all() : query.limit(input.limit).all()).pipe(
           Effect.orDie,
         )
-        return (direction === "previous" ? rows.toReversed() : rows).map((row) => fromRow(row))
+        const ordered = direction === "previous" ? rows.toReversed() : rows
+        return ordered.map((row) => fromRow(row.info, row.steps))
       }),
       messages: Effect.fn("SessionStore.messages")(function* (input) {
         const direction = input.cursor?.direction ?? "next"

@@ -62,8 +62,6 @@ export type SessionStatsToolUsage = {
   durationP50?: number
 }
 
-export type SessionStatsActivity = { date: string; steps: number }
-
 export type SessionMessageAgentSelected = {
   id: string
   metadata?: { [x: string]: JsonValue }
@@ -494,6 +492,8 @@ export type ConfigProviderSettings = {
 export type PermissionRule = { action: string; resource: string; effect: PermissionEffect }
 
 export type PluginInfo = { id?: string; source: PluginSource; features: PluginFeatures; state: PluginState }
+
+export type SessionStatsActivity = { date: string; steps: number; tokens: TokenUsageInfo }
 
 export type SessionRevert = { messageID: string; partID?: string; snapshot?: string; files?: Array<FileDiffInfo> }
 
@@ -1994,6 +1994,7 @@ export type SessionInfo = {
   model?: ModelRef
   cost: MoneyUSD
   tokens: TokenUsageInfo
+  steps?: number
   outcome?: "succeeded" | "failed" | "interrupted"
   time: { created: number; updated: number; idle?: number; viewed?: number; archived?: number }
   title?: string
@@ -3053,6 +3054,7 @@ export type SessionImportInput = {
         readonly reasoning: number
         readonly cache: { readonly read: number; readonly write: number }
       }
+      readonly steps?: number
       readonly outcome?: "succeeded" | "failed" | "interrupted"
       readonly time: {
         readonly created: number
@@ -3390,6 +3392,7 @@ export type SessionImportInput = {
         readonly reasoning: number
         readonly cache: { readonly read: number; readonly write: number }
       }
+      readonly steps?: number
       readonly outcome?: "succeeded" | "failed" | "interrupted"
       readonly time: {
         readonly created: number
@@ -3727,6 +3730,7 @@ export type SessionImportInput = {
         readonly reasoning: number
         readonly cache: { readonly read: number; readonly write: number }
       }
+      readonly steps?: number
       readonly outcome?: "succeeded" | "failed" | "interrupted"
       readonly time: {
         readonly created: number

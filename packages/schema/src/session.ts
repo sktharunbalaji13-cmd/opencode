@@ -5,7 +5,7 @@ import { Agent } from "./agent.js"
 import { Location } from "./location.js"
 import { Model } from "./model.js"
 import { Project } from "./project.js"
-import { DateTimeUtcFromMillis, optional, RelativePath } from "./schema.js"
+import { DateTimeUtcFromMillis, NonNegativeInt, optional, RelativePath } from "./schema.js"
 import { SessionEvent } from "./session-event.js"
 import { SessionID } from "./session-id.js"
 import { SessionMetadata } from "./session-metadata.js"
@@ -40,6 +40,13 @@ export const Info = Schema.Struct({
   model: Model.Ref.pipe(optional),
   cost: Money.USD,
   tokens: TokenUsage.Info,
+  /**
+   * Model requests made in this session. One assistant step counts as one request, matching
+   * `SessionStats.steps`, and messages copied in from a fork boundary are excluded the same
+   * way. Derived from the indexed message rows rather than stored, so it covers every step
+   * the session has taken. Absent on projections that do not read messages.
+   */
+  steps: NonNegativeInt.pipe(optional),
   /** Outcome of the last completed execution, recorded at `time.idle`. Absent until a run reaches a terminal transition. */
   outcome: Schema.Literals(["succeeded", "failed", "interrupted"]).pipe(optional),
   time: Schema.Struct({

@@ -1,10 +1,12 @@
 import { describe, expect } from "bun:test"
+import { eq } from "drizzle-orm"
 import { Effect } from "effect"
 import { Bus } from "@opencode/core/bus"
 import { Database } from "@opencode/core/database/database"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
 import { ProjectTable } from "@opencode/core/project/sql"
 import { SessionProjector } from "@opencode/core/session/projector"
+import { SessionMessageTable, SessionTable } from "@opencode/core/session/sql"
 import { SessionStore } from "@opencode/core/session/store"
 import { Event } from "@opencode/schema/event"
 import { Project } from "@opencode/schema/project"
@@ -185,6 +187,66 @@ describe("SessionStore", () => {
           cursor: { id: SessionMessage.ID.make("msg_foreign"), direction: "next" },
         }),
       ).toEqual([])
+    }),
+  )
+
+  it.effect("counts one request per assistant step, ignoring other message types and fork copies", () =>
+    Effect.gen(function* () {
+      const database = yield* Database.Service
+      const rootID = "ses_steps_root"
+      const forkID = "ses_steps_fork"
+      yield* seedSessions([
+        { id: rootID, updated: 10 },
+        { id: forkID, updated: 20 },
+      ])
+      // The fork boundary sits at 5000, so anything older was copied in from the parent.
+      yield* database.db
+        .update(SessionTable)
+        .set({ fork_session_id: Session.ID.make(rootID), time_created: 5000 })
+        .where(eq(SessionTable.id, Session.ID.make(forkID)))
+        .run()
+
+      const insert = (
+        sessionID: string,
+        rows: { id: string; type: SessionMessage.Type; time_created: number }[],
+      ) =>
+        database.db
+          .insert(SessionMessageTable)
+          .values(
+            rows.map((row, index) => ({
+              id: SessionMessage.ID.make(row.id),
+              session_id: Session.ID.make(sessionID),
+              type: row.type,
+              seq: index + 1,
+              time_created: row.time_created,
+              data: {} as typeof SessionMessageTable.$inferInsert.data,
+            })),
+          )
+          .run()
+
+      yield* insert(rootID, [
+        { id: "msg_root_assistant_1", type: "assistant", time_created: 100 },
+        { id: "msg_root_assistant_2", type: "assistant", time_created: 200 },
+        { id: "msg_root_assistant_3", type: "assistant", time_created: 300 },
+        // Non-assistant rows are prompts and markers, never requests.
+        { id: "msg_root_user", type: "user", time_created: 50 },
+        { id: "msg_root_idle", type: "idle", time_created: 400 },
+      ])
+      yield* insert(forkID, [
+        // Copied from the parent before the boundary, so it is not this fork's work.
+        { id: "msg_fork_copied", type: "assistant", time_created: 100 },
+        { id: "msg_fork_assistant_1", type: "assistant", time_created: 6000 },
+        { id: "msg_fork_assistant_2", type: "assistant", time_created: 7000 },
+      ])
+
+      const store = yield* SessionStore.Service
+      const listed = yield* store.list()
+      expect(listed.find((session) => String(session.id) === rootID)?.steps).toBe(3)
+      expect(listed.find((session) => String(session.id) === forkID)?.steps).toBe(2)
+
+      // The count follows the session, so it is also available from a single fetch.
+      expect((yield* store.get(Session.ID.make(rootID)))?.steps).toBe(3)
+      expect((yield* store.get(Session.ID.make("ses_absent")))?.steps).toBeUndefined()
     }),
   )
 })
