@@ -35,20 +35,45 @@ const SETTLE_MS = 150
 const DAY_COUNT = 7
 const MAX_SESSIONS = 4
 const SESSION_LIST_LIMIT = 50
-const BAR_WIDTH = 14
+export const BAR_WIDTH = 20
 const BAR_GLYPHS = ["·", "░", "▒", "▓", "█"]
 
 // The sidebar is 42 columns wide with 2 columns of padding and 1 reserved for the
-// scrollbar, leaving 37. Every table below is sized to fit that without wrapping.
-const PERIOD_WIDTH = 21
-const PERIOD_VALUE_WIDTH = 8
-const PERIOD_REQUEST_WIDTH = 6
-const SESSION_NAME_WIDTH = 14
-const SESSION_VALUE_WIDTH = 7
-const SESSION_REQUEST_WIDTH = 5
-const SESSION_STATUS_WIDTH = 5
-const DAY_LABEL_WIDTH = 7
-const DAY_VALUE_WIDTH = 8
+// scrollbar, leaving 37. Columns are declared once and every row is built from them, so
+// header and body cannot drift apart and no row can wrap the panel.
+export const TABLE_WIDTH = 37
+const COLUMN_RULE = "│"
+const STATUS_DOT = "●"
+
+type Column = { header: string; width: number; align: "left" | "right" }
+
+const PERIOD_COLUMNS: Column[] = [
+  { header: "PERIOD", width: 20, align: "left" },
+  { header: "TOKENS", width: 7, align: "right" },
+  { header: "REQUESTS", width: 8, align: "right" },
+]
+
+const SESSION_STATUS_WIDTH = 6
+const SESSION_COLUMNS: Column[] = [
+  { header: "SESSION", width: 13, align: "left" },
+  { header: "TOKENS", width: 7, align: "right" },
+  { header: "REQUESTS", width: 8, align: "right" },
+  // Left-aligned so the status dots line up down the column.
+  { header: "STATUS", width: SESSION_STATUS_WIDTH, align: "left" },
+]
+
+const DAY_COLUMNS: Column[] = [
+  { header: "DATE", width: 7, align: "left" },
+  { header: "USAGE", width: BAR_WIDTH, align: "left" },
+  { header: "TOKENS", width: 8, align: "right" },
+]
+
+export const TABLES = [PERIOD_COLUMNS, SESSION_COLUMNS, DAY_COLUMNS]
+
+/** The width a rendered row occupies: its cells plus one column rule between each pair. */
+export function tableDeclaredWidth(columns: readonly Column[]) {
+  return columns.reduce((sum, column) => sum + column.width, 0) + columns.length - 1
+}
 
 type Tokens = TokenUsage.Info
 
@@ -141,52 +166,75 @@ export function formatSessionRequests(steps: number | undefined) {
 }
 
 /**
- * The `SESSION | TOKENS | REQUESTS` cells of a session row. Kept separate from the status
- * cell so only the status indicator carries the status colour, matching the sidebar style
- * used by the MCP section where the name and values stay muted.
+ * One cell, clipped to its column. `padEnd` does not shorten an overlong value, so a long
+ * session title is cut here rather than pushing the row past the panel.
  */
-export function formatSessionCells(row: { name: string; tokens: number; steps?: number }) {
-  // padEnd does not shorten an overlong title, so clip it or the row wraps the panel.
-  const name = Locale.truncateWidth(row.name, SESSION_NAME_WIDTH)
-  return `${name.padEnd(SESSION_NAME_WIDTH)}${statsNumber(row.tokens).padStart(
-    SESSION_VALUE_WIDTH,
-  )}  ${formatSessionRequests(row.steps).padStart(SESSION_REQUEST_WIDTH)}`
+export function tableCell(text: string, column: Column) {
+  const clipped = Locale.truncateWidth(text, column.width)
+  return column.align === "left" ? clipped.padEnd(column.width) : clipped.padStart(column.width)
 }
 
-/** The trailing status cell, padded to the sidebar width. */
-export function formatSessionStatus(status: string) {
-  return `  ${status.padStart(SESSION_STATUS_WIDTH)}`
+/** Header and body rows are built the same way, so the two always line up. */
+export function tableRow(columns: readonly Column[], values: readonly string[]) {
+  return columns.map((column, index) => tableCell(values[index] ?? "", column)).join(COLUMN_RULE)
+}
+
+export function tableHeader(columns: readonly Column[]) {
+  return tableRow(columns, columns.map((column) => column.header))
 }
 
 /**
- * One `SESSION | TOKENS | REQUESTS | STATUS` line. The leading status dot is rendered as a
- * separate coloured span, so this returns everything after it and the caller prefixes two
- * columns. With the dot that is 37 columns, matching SESSION_SIDEBAR_WIDTH.
+ * The `SESSION | TOKENS | REQUESTS` cells. The status cell is returned separately so only
+ * the status indicator and its label carry the status colour, matching the MCP section
+ * where the name and values stay muted.
  */
+export function formatSessionCells(row: { name: string; tokens: number; steps?: number }) {
+  return tableRow(SESSION_COLUMNS.slice(0, 3), [
+    row.name,
+    statsNumber(row.tokens),
+    formatSessionRequests(row.steps),
+  ])
+}
+
+/** The status cell, dot included. Padded rather than coloured so the caller owns the colour. */
+export function formatSessionStatus(status: string) {
+  return `${STATUS_DOT} ${status}`.padEnd(SESSION_STATUS_WIDTH)
+}
+
+/** One complete `SESSION | TOKENS | REQUESTS | STATUS` line, status dot included. */
 export function formatSessionRow(row: { name: string; tokens: number; steps?: number; status: string }) {
-  return `${formatSessionCells(row)}${formatSessionStatus(row.status)}`
+  return `${formatSessionCells(row)}${COLUMN_RULE}${formatSessionStatus(row.status)}`
 }
 
 /**
  * The panel footer. `ACTIVE` counts the sessions actually listed, which is what the panel
- * shows, rather than only the ones currently running.
+ * shows, rather than only the ones currently running. `TOTAL` is flush to the table edge.
  */
 export function formatSessionsFooter(shown: number, totalTokens: number) {
-  return `${`ACTIVE: ${shown}`.padEnd(22)}${`TOTAL: ${statsNumber(totalTokens)}`.padStart(15)}`
+  const total = `TOTAL: ${statsNumber(totalTokens)}`
+  return `${`ACTIVE: ${shown}`.padEnd(TABLE_WIDTH - total.length)}${total}`
 }
 
-/** One `PERIOD · range | TOKENS | REQUESTS` line, padded to the sidebar width. */
+export function formatPeriodHeader() {
+  return tableHeader(PERIOD_COLUMNS)
+}
+
+/** One `PERIOD | TOKENS | REQUESTS` row. */
 export function formatPeriodRow(label: string, stats: SessionStatsInfo | undefined) {
-  const tokens = statsNumber(usageTotal(stats?.tokens)).padStart(PERIOD_VALUE_WIDTH)
-  const requests = formatRequests(stats?.steps).padStart(PERIOD_REQUEST_WIDTH)
-  return `${label.padEnd(PERIOD_WIDTH)}${tokens}  ${requests}`
+  return tableRow(PERIOD_COLUMNS, [
+    label,
+    statsNumber(usageTotal(stats?.tokens)),
+    formatRequests(stats?.steps),
+  ])
 }
 
-/** One `DAY | bar | TOKENS` line. The bar scales against `max` from the same range. */
+export function formatDayHeader() {
+  return tableHeader(DAY_COLUMNS)
+}
+
+/** One `DATE | USAGE | TOKENS` row. The bar scales against `max` from the same range. */
 export function formatDayRow(day: DayRow, max: number) {
-  return `${day.label.padEnd(DAY_LABEL_WIDTH)}${bar(day.tokens, max).padEnd(BAR_WIDTH)}  ${statsNumber(day.tokens).padStart(
-    DAY_VALUE_WIDTH,
-  )}`
+  return tableRow(DAY_COLUMNS, [day.label, bar(day.tokens, max, BAR_WIDTH), statsNumber(day.tokens)])
 }
 
 /** `TODAY · 02 OCT 2026`, sized to the 21-column period cell. */
@@ -305,8 +353,10 @@ export function TokenUsageDashboard(props: { context: Plugin.Context; sessionID:
 
   const now = () => Date.now()
 
-  const compact = createMemo(() => dimensions().height < 26)
-  const sessionLimit = createMemo(() => (dimensions().height < 34 ? 2 : MAX_SESSIONS))
+  // Each table spends one extra line on its header rule, so the heights that gate the
+  // 7-day chart and the four-row cap move down by the three rules the panel now uses.
+  const compact = createMemo(() => dimensions().height < 29)
+  const sessionLimit = createMemo(() => (dimensions().height < 37 ? 2 : MAX_SESSIONS))
 
   const sessions = createMemo(() => {
     const state = snapshot()
@@ -338,11 +388,10 @@ export function TokenUsageDashboard(props: { context: Plugin.Context; sessionID:
         <b>Token usage</b>
       </text>
       <Show when={snapshot().today}>
-        <text fg={theme.text.muted}>
-          {`${"PERIOD".padEnd(PERIOD_WIDTH)}${"TOKENS".padStart(PERIOD_VALUE_WIDTH)}  ${"REQUESTS".padStart(
-            PERIOD_REQUEST_WIDTH,
-          )}`}
+        <text fg={theme.text.base}>
+          <b>{formatPeriodHeader()}</b>
         </text>
+        <box width={TABLE_WIDTH} border={["top"]} borderColor={theme.border.base} />
         <For each={periods()}>
           {(period) => <text fg={theme.text.muted}>{formatPeriodRow(period.label, period.stats)}</text>}
         </For>
@@ -352,16 +401,15 @@ export function TokenUsageDashboard(props: { context: Plugin.Context; sessionID:
         <text fg={theme.text.base}>
           <b>Active sessions</b>
         </text>
-        <text fg={theme.text.muted}>
-          {`  ${"SESSION".padEnd(SESSION_NAME_WIDTH)}${"TOKENS".padStart(SESSION_VALUE_WIDTH)}  ${"REQUESTS".padStart(
-            SESSION_REQUEST_WIDTH,
-          )}  ${"STATUS".padStart(SESSION_STATUS_WIDTH)}`}
+        <text fg={theme.text.base}>
+          <b>{tableHeader(SESSION_COLUMNS)}</b>
         </text>
+        <box width={TABLE_WIDTH} border={["top"]} borderColor={theme.border.base} />
         <For each={sessions().rows}>
           {(row) => (
             <text fg={theme.text.muted}>
-              <span style={{ fg: row.running ? theme.text.feedback.success.base : theme.text.muted }}>• </span>
               {formatSessionCells(row)}
+              {COLUMN_RULE}
               <span style={{ fg: row.running ? theme.text.feedback.success.base : theme.text.muted }}>
                 {formatSessionStatus(row.status)}
               </span>
@@ -378,6 +426,10 @@ export function TokenUsageDashboard(props: { context: Plugin.Context; sessionID:
         <text fg={theme.text.base}>
           <b>Last 7 days</b>
         </text>
+        <text fg={theme.text.base}>
+          <b>{formatDayHeader()}</b>
+        </text>
+        <box width={TABLE_WIDTH} border={["top"]} borderColor={theme.border.base} />
         <For each={days()}>
           {(day) => <text fg={theme.text.muted}>{formatDayRow(day, dayMax())}</text>}
         </For>

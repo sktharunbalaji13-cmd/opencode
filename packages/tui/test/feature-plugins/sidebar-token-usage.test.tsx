@@ -2,9 +2,12 @@
 import { describe, expect, test } from "bun:test"
 import type { SessionInfo, SessionStatsInfo } from "@opencode/client"
 import {
+  BAR_WIDTH,
   bar,
   dayRows,
+  formatDayHeader,
   formatDayRow,
+  formatPeriodHeader,
   formatPeriodRow,
   formatRequests,
   formatSessionCells,
@@ -15,6 +18,9 @@ import {
   periodLabel,
   selectSessions,
   statusLabel,
+  TABLES,
+  TABLE_WIDTH,
+  tableDeclaredWidth,
   usageTotal,
 } from "../../src/feature-plugins/sidebar/token-usage"
 import { startOfLocalDay, startOfLocalMonth, startOfLocalWeek } from "@opencode/util/usage-periods"
@@ -308,10 +314,10 @@ describe("session request counts", () => {
     expect(formatSessionStatus("IDLE")).toContain("IDLE")
   })
 
-  test("a full row is the muted cells plus the status cell", () => {
+  test("a full row is the muted cells, a column rule, then the status cell", () => {
     const cells = formatSessionCells({ name: "M020 Verifier", tokens: 107_500, steps: 23 })
     expect(formatSessionRow({ name: "M020 Verifier", tokens: 107_500, steps: 23, status: "RUN" })).toBe(
-      `${cells}${formatSessionStatus("RUN")}`,
+      `${cells}│${formatSessionStatus("RUN")}`,
     )
   })
 
@@ -321,7 +327,7 @@ describe("session request counts", () => {
     expect(row).toContain("107.5K")
     expect(row).toContain("23")
     expect(row).toContain("RUN")
-    expect(row.trimEnd().length).toBeLessThanOrEqual(35)
+    expect(row.length).toBe(TABLE_WIDTH)
   })
 
   test("zero requests still renders as a real count", () => {
@@ -337,12 +343,63 @@ describe("session request counts", () => {
       steps: 1_234_567,
       status: "STOP",
     })
-    // 2 columns are consumed by the status dot rendered before this string.
-    expect(row.length).toBeLessThanOrEqual(35)
-    expect(row).toContain("…")
+    // The status dot now lives inside the status cell, so the row claims the full width.
+    expect(row.length).toBe(TABLE_WIDTH)
     expect(row).toContain("1.2B")
     expect(row).toContain("1.2M")
     expect(row).toContain("STOP")
+  })
+})
+
+describe("table rendering", () => {
+  test("every table is exactly the sidebar width, column rules included", () => {
+    for (const columns of TABLES) expect(tableDeclaredWidth(columns)).toBe(TABLE_WIDTH)
+  })
+
+  test("headers and their rows share the same column rules", () => {
+    for (const [header, row] of [
+      [formatPeriodHeader(), formatPeriodRow("TODAY · 02 OCT 2026", stats({ steps: 1 }))],
+      [formatDayHeader(), formatDayRow({ key: "d", label: "02 OCT", tokens: 20_700 }, 20_700)],
+    ] as const) {
+      expect(header.split("│").length).toBe(row.split("│").length)
+      expect(header.length).toBe(row.length)
+    }
+  })
+
+  test("column rules separate every cell, so the row reads as a table", () => {
+    const row = formatSessionRow({ name: "M020 Verifier", tokens: 107_500, steps: 23, status: "RUN" })
+    expect(row.split("│")).toHaveLength(4)
+    expect(formatPeriodRow("TODAY · 02 OCT 2026", stats({ steps: 1 })).split("│")).toHaveLength(3)
+    expect(formatDayRow({ key: "d", label: "02 OCT", tokens: 1 }, 1).split("│")).toHaveLength(3)
+  })
+
+  test("a header wider than its values does not push the row wider", () => {
+    expect(formatPeriodHeader().length).toBe(TABLE_WIDTH)
+    expect(formatPeriodRow("TODAY · 02 OCT 2026", stats({ steps: 1 })).length).toBe(TABLE_WIDTH)
+  })
+
+  test("an overlong cell is clipped rather than widening the table", () => {
+    const row = formatPeriodRow("A PERIOD LABEL FAR TOO LONG FOR THE COLUMN", stats({ steps: 1 }))
+    expect(row.length).toBe(TABLE_WIDTH)
+  })
+
+  test("the 7-day bar stays inside its own USAGE column", () => {
+    const row = formatDayRow({ key: "d", label: "02 OCT", tokens: 999_999_999 }, 999_999_999)
+    const [, usage, tokens] = row.split("│")
+    expect(usage?.length).toBe(BAR_WIDTH)
+    expect(tokens?.trim().length).toBeGreaterThan(0)
+  })
+
+  test("the footer stays inside the table width", () => {
+    expect(formatSessionsFooter(4, 137_300_000).length).toBe(TABLE_WIDTH)
+    expect(formatSessionsFooter(4, 137_300_000)).toContain("TOTAL: 137.3M")
+  })
+
+  test("the status dot lives in the status cell, not before the row", () => {
+    // The previous layout prefixed a coloured dot outside the columns.
+    const row = formatSessionRow({ name: "Quiet", tokens: 0, steps: 0, status: "DONE" })
+    expect(row.startsWith("●")).toBe(false)
+    expect(row).toContain("● DONE")
   })
 })
 
