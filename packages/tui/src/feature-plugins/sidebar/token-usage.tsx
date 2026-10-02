@@ -45,11 +45,25 @@ export const TABLE_WIDTH = 37
 const COLUMN_RULE = "│"
 const STATUS_DOT = "●"
 
+/** Exactly one blank line separates the sections. Never more: the sidebar is short. */
+const SECTION_SPACER = 1
+
+// One header rule per table, and a spacer before the second and third sections.
+const TABLE_RULES = 3
+const SECTION_SPACERS = 2
+
+/** Below this height the 7-day chart hides. */
+export const COMPACT_HEIGHT = 26 + TABLE_RULES + SECTION_SPACERS
+
+/** Below this height the session list is capped at two rows instead of four. */
+export const FULL_SESSIONS_HEIGHT = 34 + TABLE_RULES + SECTION_SPACERS
+
 type Column = { header: string; width: number; align: "left" | "right" }
 
 const PERIOD_COLUMNS: Column[] = [
-  { header: "PERIOD", width: 20, align: "left" },
-  { header: "TOKENS", width: 7, align: "right" },
+  // 21 fits "MONTH · 28 SEP–02 OCT", which appears when the week straddles a month boundary.
+  { header: "PERIOD", width: 21, align: "left" },
+  { header: "TOKENS", width: 6, align: "right" },
   { header: "REQUESTS", width: 8, align: "right" },
 ]
 
@@ -353,10 +367,11 @@ export function TokenUsageDashboard(props: { context: Plugin.Context; sessionID:
 
   const now = () => Date.now()
 
-  // Each table spends one extra line on its header rule, so the heights that gate the
-  // 7-day chart and the four-row cap move down by the three rules the panel now uses.
-  const compact = createMemo(() => dimensions().height < 29)
-  const sessionLimit = createMemo(() => (dimensions().height < 37 ? 2 : MAX_SESSIONS))
+  // The panel spends one line per table on its header rule and one blank line before each
+  // section after the first, so both height gates move down by every line the panel gains.
+  // Keeping them derived means a future section or rule cannot silently overflow the sidebar.
+  const compact = createMemo(() => dimensions().height < COMPACT_HEIGHT)
+  const sessionLimit = createMemo(() => (dimensions().height < FULL_SESSIONS_HEIGHT ? 2 : MAX_SESSIONS))
 
   const sessions = createMemo(() => {
     const state = snapshot()
@@ -398,6 +413,7 @@ export function TokenUsageDashboard(props: { context: Plugin.Context; sessionID:
       </Show>
 
       <Show when={sessions().rows.length > 0}>
+        <box height={SECTION_SPACER} />
         <text fg={theme.text.base}>
           <b>Active sessions</b>
         </text>
@@ -423,6 +439,7 @@ export function TokenUsageDashboard(props: { context: Plugin.Context; sessionID:
       </Show>
 
       <Show when={!compact()}>
+        <box height={SECTION_SPACER} />
         <text fg={theme.text.base}>
           <b>Last 7 days</b>
         </text>

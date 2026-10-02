@@ -1,9 +1,14 @@
 /** @jsxImportSource @opentui/solid */
 import { describe, expect, test } from "bun:test"
+import { RGBA } from "@opentui/core"
+import { testRender } from "@opentui/solid"
 import type { SessionInfo, SessionStatsInfo } from "@opencode/client"
+import type { Context } from "@opencode/plugin/tui/context"
 import {
   BAR_WIDTH,
   bar,
+  COMPACT_HEIGHT,
+  FULL_SESSIONS_HEIGHT,
   dayRows,
   formatDayHeader,
   formatDayRow,
@@ -21,6 +26,7 @@ import {
   TABLES,
   TABLE_WIDTH,
   tableDeclaredWidth,
+  TokenUsageDashboard,
   usageTotal,
 } from "../../src/feature-plugins/sidebar/token-usage"
 import { startOfLocalDay, startOfLocalMonth, startOfLocalWeek } from "@opencode/util/usage-periods"
@@ -442,5 +448,110 @@ describe("period labels", () => {
     for (const from of [startOfLocalDay(now), startOfLocalWeek(now), startOfLocalMonth(now)]) {
       expect(periodLabel("MONTH", from, now).length).toBeLessThanOrEqual(21)
     }
+  })
+})
+
+describe("section spacing", () => {
+  const usage = (input: number) => ({ input, output: 0, reasoning: 0, cache: { read: 0, write: 0 } })
+
+  const fixture = (id: string, title: string, tokens: number, steps: number) =>
+    session({ id, title, steps, tokens: usage(tokens) })
+
+  function panelContext(options: { sessions?: SessionInfo[]; running?: string } = {}) {
+    const base = RGBA.fromInts(200, 200, 200)
+    const period = stats({ steps: 5, tokens: usage(103_800) })
+    return {
+      theme: {
+        text: { base, muted: base, feedback: { success: { base: RGBA.fromInts(0, 255, 0) } } },
+        border: { base: RGBA.fromInts(90, 90, 90) },
+      },
+      client: {
+        session: {
+          stats: async () => period,
+          list: async () => ({ data: options.sessions ?? [] }),
+        },
+      },
+      data: {
+        on: () => () => {},
+        listen: () => () => {},
+        session: { status: (id: string) => (id === options.running ? "running" : "idle") },
+      },
+    } as unknown as Context
+  }
+
+  async function panel(height: number, sessions: SessionInfo[] = []) {
+    const app = await testRender(() => <TokenUsageDashboard context={panelContext({ sessions })} sessionID="probe" />, {
+      width: 42,
+      height,
+    })
+    try {
+      await app.renderOnce()
+      await new Promise((resolve) => setTimeout(resolve, 400))
+      await app.renderOnce()
+      const lines = app
+        .captureCharFrame()
+        .split("\n")
+        .map((line) => line.trimEnd())
+      while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop()
+      return lines
+    } finally {
+      app.renderer.destroy()
+    }
+  }
+
+  const rows = [
+    fixture("a", "Quick check-in", 42_200, 2),
+    fixture("b", "Greeting", 21_500, 1),
+    fixture("c", "Friendly greeting", 21_400, 1),
+    fixture("d", "Another session", 18_900, 1),
+    fixture("e", "Overflow one", 9_000, 3),
+    fixture("f", "Overflow two", 8_000, 3),
+  ]
+
+  test("the height gates account for the rules and the spacers", () => {
+    expect(COMPACT_HEIGHT).toBe(31)
+    expect(FULL_SESSIONS_HEIGHT).toBe(39)
+  })
+
+  test("separates the sections with one blank line and nothing else", async () => {
+    const lines = await panel(44, rows)
+    expect(lines[0]).toBe("Token usage")
+    expect(lines.join("\n")).toContain("Active sessions")
+    expect(lines.join("\n")).toContain("Last 7 days")
+    // Three tables rendered, so two boundaries and therefore exactly two blank lines.
+    expect(lines.filter((line) => line === "").length).toBe(2)
+    const sessions = lines.findIndex((line) => line.includes("Active sessions"))
+    const days = lines.findIndex((line) => line.includes("Last 7 days"))
+    expect(lines[sessions - 1]).toBe("")
+    expect(lines[sessions - 2]).not.toBe("")
+    expect(lines[days - 1]).toBe("")
+    expect(lines[days - 2]).not.toBe("")
+  })
+
+  test("keeps every table row at the sidebar width", async () => {
+    for (const line of await panel(44, rows)) {
+      if (line.includes("│")) expect(line.length).toBe(TABLE_WIDTH)
+    }
+  })
+
+  test("takes the spacer away with the section it belongs to", async () => {
+    const tall = await panel(COMPACT_HEIGHT + 2, rows)
+    expect(tall.join("\n")).toContain("Last 7 days")
+    expect(tall.filter((line) => line === "").length).toBe(2)
+
+    const short = await panel(COMPACT_HEIGHT - 2, rows)
+    expect(short.join("\n")).not.toContain("Last 7 days")
+    expect(short.filter((line) => line === "").length).toBe(1)
+  })
+
+  test("still caps the session rows below the full height", async () => {
+    const capped = await panel(FULL_SESSIONS_HEIGHT - 2, rows)
+    expect(capped.join("\n")).toContain("ACTIVE: 2")
+    // Two of six listed, so four are still hidden behind the overflow line.
+    expect(capped.join("\n")).toContain("+4 more")
+
+    const full = await panel(FULL_SESSIONS_HEIGHT + 2, rows)
+    expect(full.join("\n")).toContain("ACTIVE: 4")
+    expect(full.join("\n")).toContain("+2 more")
   })
 })
