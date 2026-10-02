@@ -21,8 +21,8 @@ const stats: SessionStatsInfo = {
   activeDays: 2,
   streak: 2,
   activity: [
-    { date: "2026-01-02", steps: 2 },
-    { date: "2026-01-03", steps: 4 },
+    { date: "2026-01-02", steps: 2, tokens: { input: 5_000, output: 1_000, reasoning: 500, cache: { read: 2_500, write: 250 } } },
+    { date: "2026-01-03", steps: 4, tokens: { input: 5_000, output: 1_000, reasoning: 500, cache: { read: 2_500, write: 250 } } },
   ],
   models: [
     {
@@ -53,7 +53,9 @@ describe("stats rendering", () => {
       {
         ...stats,
         range: { from: new Date(2026, 3, 29).getTime(), to: new Date(2026, 4, 20).getTime() },
-        activity: [{ date: "2026-04-29", steps: 1 }],
+        activity: [
+          { date: "2026-04-29", steps: 1, tokens: { input: 10_000, output: 2_000, reasoning: 1_000, cache: { read: 5_000, write: 500 } } },
+        ],
       },
       options(),
     )
