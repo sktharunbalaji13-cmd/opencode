@@ -36,6 +36,7 @@ const DAY_COUNT = 7
 const MAX_SESSIONS = 4
 const SESSION_LIST_LIMIT = 50
 export const BAR_WIDTH = 20
+const BAR_GLYPHS = ["·", "░", "▒", "▓", "█"]
 
 // The sidebar is 42 columns wide with 2 columns of padding and 1 reserved for the
 // scrollbar, leaving 37. Columns are declared once and every row is built from them, so
@@ -97,13 +98,15 @@ export function usageTotal(tokens: Tokens | undefined) {
 }
 
 /**
- * Horizontal bar scaled against the largest value in the displayed range. Length is the only
- * encoding, and every non-zero value is drawn with the solid block glyph: a repeated middle
- * dot read as punctuation rather than as a bar, which was the wrong signal for a small value.
+ * Horizontal bar scaled against the largest value in the displayed range. Length carries
+ * the magnitude; the glyph shade carries the fill depth so short bars stay legible.
  */
 export function bar(value: number, max: number, width = BAR_WIDTH) {
   if (!(value > 0) || !(max > 0)) return ""
-  return "█".repeat(Math.max(1, Math.round(Math.min(1, value / max) * width)))
+  const ratio = Math.min(1, value / max)
+  const filled = Math.max(1, Math.round(ratio * width))
+  const shade = BAR_GLYPHS[Math.max(0, Math.ceil(ratio * BAR_GLYPHS.length) - 1)]
+  return (shade ?? BAR_GLYPHS[0]).repeat(filled)
 }
 
 export function statusLabel(status: "idle" | "running", outcome: SessionInfo["outcome"]) {
