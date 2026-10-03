@@ -98,12 +98,17 @@ export function usageTotal(tokens: Tokens | undefined) {
 
 /**
  * Horizontal bar scaled against the largest value in the displayed range. Length is the only
- * encoding, and every non-zero value is drawn with the solid block glyph: a repeated middle
- * dot read as punctuation rather than as a bar, which was the wrong signal for a small value.
+ * encoding, so a repeated middle dot can never read as punctuation instead of a bar.
+ *
+ * The heavy horizontal rule is deliberate. Terminal rows have no vertical gap, so two solid
+ * block glyphs in the same column merge into what looks like one taller bar, and a half block
+ * does not help either because some fonts still draw it full height. A centred rule leaves
+ * whitespace above and below every stroke, which keeps adjacent days separate for the cost of
+ * no extra row and works the same way in any font.
  */
 export function bar(value: number, max: number, width = BAR_WIDTH) {
   if (!(value > 0) || !(max > 0)) return ""
-  return "█".repeat(Math.max(1, Math.round(Math.min(1, value / max) * width)))
+  return "━".repeat(Math.max(1, Math.round(Math.min(1, value / max) * width)))
 }
 
 export function statusLabel(status: "idle" | "running", outcome: SessionInfo["outcome"]) {
