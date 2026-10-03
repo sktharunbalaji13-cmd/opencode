@@ -44,25 +44,22 @@ export const TABLE_WIDTH = 37
 const COLUMN_RULE = "│"
 const STATUS_DOT = "●"
 
-/** Exactly one blank line separates the sections. Never more: the sidebar is short. */
-const SECTION_SPACER = 1
-
 /** One blank line between two adjacent non-zero daily bars. */
 const DAY_SPACER = 1
 
-// One header rule per table, and a spacer before the second and third sections.
+// One header rule per table. The sections carry no blank line between them: a bold heading plus
+// the rule under each header already divides them, and the sidebar is short.
 const TABLE_RULES = 3
-const SECTION_SPACERS = 2
 
 /**
  * Base height below which the 7-day chart hides. The blank lines separating adjacent daily bars
  * are charged on top of this from the days actually rendered, so a quiet week pays for the one
  * spacer it uses instead of reserving the six a fully active week could need.
  */
-export const COMPACT_HEIGHT = 26 + TABLE_RULES + SECTION_SPACERS
+export const COMPACT_HEIGHT = 26 + TABLE_RULES
 
 /** Below this height the session list is capped at two rows instead of four. */
-export const FULL_SESSIONS_HEIGHT = 34 + TABLE_RULES + SECTION_SPACERS
+export const FULL_SESSIONS_HEIGHT = 34 + TABLE_RULES
 
 type Column = { header: string; width: number; align: "left" | "right" }
 
@@ -441,7 +438,6 @@ export function TokenUsageDashboard(props: { context: Plugin.Context; sessionID:
       </Show>
 
       <Show when={sessions().rows.length > 0}>
-        <box height={SECTION_SPACER} />
         <text fg={theme.text.base}>
           <b>Active sessions</b>
         </text>
@@ -467,7 +463,6 @@ export function TokenUsageDashboard(props: { context: Plugin.Context; sessionID:
       </Show>
 
       <Show when={!compact()}>
-        <box height={SECTION_SPACER} />
         <text fg={theme.text.base}>
           <b>Last 7 days</b>
         </text>
