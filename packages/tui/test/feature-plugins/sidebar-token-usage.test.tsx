@@ -11,7 +11,6 @@ import {
   FULL_SESSIONS_HEIGHT,
   dayLines,
   dayRows,
-  daySpacerCount,
   formatDayHeader,
   formatDayRow,
   formatPeriodHeader,
@@ -144,34 +143,17 @@ describe("bar scaling", () => {
     ).toEqual(["day", "day", "spacer", "day"])
   })
 
-  test("separates a fully active week and charges only the spacers it uses", () => {
+  test("separates a fully active week and budgets for the worst case", () => {
     const week = Array.from({ length: 7 }, (_, index) => ({
       key: String(index),
       label: "0" + index,
       tokens: 1000 * (index + 1),
     }))
-    const lines = dayLines(week)
-    expect(lines.filter((line) => line.kind === "day")).toHaveLength(7)
-    expect(daySpacerCount(lines)).toBe(6)
-    // The gate stays at its base; the six spacers are added from the rendered days instead of
-    // being reserved up front, so a quiet week only pays for the spacer it actually has.
-    expect(COMPACT_HEIGHT).toBe(31)
-    expect(FULL_SESSIONS_HEIGHT).toBe(39)
-  })
-
-  test("a quiet week pays for one spacer rather than the worst case", () => {
-    const quiet = dayLines([
-      { key: "a", label: "02 OCT", tokens: 370_000_000 },
-      { key: "b", label: "03 OCT", tokens: 130_300_000 },
-    ])
-    expect(daySpacerCount(quiet)).toBe(1)
-    expect(COMPACT_HEIGHT + daySpacerCount(quiet)).toBe(32)
-  })
-
-  test("an all-zero week costs no spacer lines at all", () => {
-    const empty = dayLines(Array.from({ length: 7 }, (_, i) => ({ key: String(i), label: "0" + i, tokens: 0 })))
-    expect(daySpacerCount(empty)).toBe(0)
-    expect(COMPACT_HEIGHT + daySpacerCount(empty)).toBe(COMPACT_HEIGHT)
+    const kinds = dayLines(week).map((line) => line.kind)
+    expect(kinds.filter((kind) => kind === "day")).toHaveLength(7)
+    expect(kinds.filter((kind) => kind === "spacer")).toHaveLength(6)
+    expect(COMPACT_HEIGHT).toBe(37)
+    expect(FULL_SESSIONS_HEIGHT).toBe(45)
   })
 
   test("never exceeds the width", () => {
@@ -590,8 +572,8 @@ describe("section spacing", () => {
   ]
 
   test("the height gates account for the rules and the spacers", () => {
-    expect(COMPACT_HEIGHT).toBe(31)
-    expect(FULL_SESSIONS_HEIGHT).toBe(39)
+    expect(COMPACT_HEIGHT).toBe(37)
+    expect(FULL_SESSIONS_HEIGHT).toBe(45)
   })
 
   test("separates the sections with one blank line and nothing else", async () => {
