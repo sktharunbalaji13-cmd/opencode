@@ -91,47 +91,24 @@ describe("bar scaling", () => {
     expect(bar(0, 0)).toBe("")
   })
 
-  test("draws every non-zero value with the heavy horizontal rule", () => {
+  test("draws every non-zero value with the solid block glyph", () => {
     for (const share of [0.001, 0.01, 0.1, 0.143, 0.25, 0.5, 0.75, 1]) {
-      expect(bar(share * 370, 370, 20)).toBe("━".repeat(Math.max(1, Math.round(share * 20))))
+      expect(bar(share * 370, 370, 20)).toBe("█".repeat(Math.max(1, Math.round(share * 20))))
     }
   })
 
   test("never draws a small value as dots or other punctuation", () => {
+    // 52.9M against a 370M day is the case that used to render as "···".
     const row = bar(52.9, 370, 20)
-    expect(row).toBe("━━━")
+    expect(row).toBe("███")
     expect(row).not.toContain("·")
     expect(row).not.toContain("░")
     // 3 of 20 cells is the closest whole-cell match to 14.3%.
     expect(row.length / 20).toBeCloseTo(0.143, 1)
   })
 
-  test("keeps at least one cell for a value far below the range", () => {
-    expect(bar(1, 1_000_000, 20)).toBe("━")
-  })
-
-  test("fills the whole column for the largest value in the range", () => {
-    expect(bar(370_000_000, 370_000_000)).toBe("━".repeat(BAR_WIDTH))
-    expect(bar(370_000_000, 370_000_000)).toHaveLength(BAR_WIDTH)
-  })
-
-  test("scales a partial day against the largest day in the same range", () => {
-    // 130.3M against 370M is 35.2%, which lands on 7 of 20 cells.
-    expect(bar(130_300_000, 370_000_000)).toBe("━".repeat(7))
-    expect(bar(130_300_000, 370_000_000)).toHaveLength(7)
-  })
-
-  test("uses a centred rule so adjacent active days cannot read as one block", () => {
-    // Two consecutive days both draw bars. A filled block glyph would touch vertically and
-    // read as a single taller bar, so the glyph must be a rule with whitespace around it.
-    const top = bar(370_000_000, 370_000_000)
-    const next = bar(130_300_000, 370_000_000)
-    for (const glyph of [top, next]) {
-      expect([...glyph].every((char) => char === "━")).toBe(true)
-      expect(glyph).not.toContain("█")
-      expect(glyph).not.toContain("▀")
-    }
-    expect(next.length).toBeLessThan(top.length)
+  test("keeps at least one solid cell for a value far below the range", () => {
+    expect(bar(1, 1_000_000, 20)).toBe("█")
   })
 
   test("never exceeds the width", () => {
@@ -286,8 +263,8 @@ describe("row formatting", () => {
     expect(half).toContain("500")
     // Length is the only encoding, so the largest day fills the column and half is half as
     // long. Comparing glyph offsets would only prove where the bar starts, which is fixed.
-    expect(full.split("━").length - 1).toBe(BAR_WIDTH)
-    expect(half.split("━").length - 1).toBe(BAR_WIDTH / 2)
+    expect(full.split("█").length - 1).toBe(BAR_WIDTH)
+    expect(half.split("█").length - 1).toBe(BAR_WIDTH / 2)
   })
 })
 
