@@ -50,17 +50,19 @@ const SECTION_SPACER = 1
 /** One blank line between two adjacent non-zero daily bars. */
 const DAY_SPACER = 1
 
-// One header rule per table, a spacer before the second and third sections, and the worst case
-// of six spacers inside a week where every day was active.
+// One header rule per table, and a spacer before the second and third sections.
 const TABLE_RULES = 3
 const SECTION_SPACERS = 2
-const DAY_SPACERS = DAY_COUNT - 1
 
-/** Below this height the 7-day chart hides. */
-export const COMPACT_HEIGHT = 26 + TABLE_RULES + SECTION_SPACERS + DAY_SPACERS
+/**
+ * Base height below which the 7-day chart hides. The blank lines separating adjacent daily bars
+ * are charged on top of this from the days actually rendered, so a quiet week pays for the one
+ * spacer it uses instead of reserving the six a fully active week could need.
+ */
+export const COMPACT_HEIGHT = 26 + TABLE_RULES + SECTION_SPACERS
 
 /** Below this height the session list is capped at two rows instead of four. */
-export const FULL_SESSIONS_HEIGHT = 34 + TABLE_RULES + SECTION_SPACERS + DAY_SPACERS
+export const FULL_SESSIONS_HEIGHT = 34 + TABLE_RULES + SECTION_SPACERS
 
 type Column = { header: string; width: number; align: "left" | "right" }
 
@@ -270,6 +272,11 @@ export function dayLines(days: readonly DayRow[]): DayLine[] {
   })
 }
 
+/** How many blank rows a set of day lines spends keeping adjacent bars apart. */
+export function daySpacerCount(lines: readonly DayLine[]) {
+  return lines.filter((line) => line.kind === "spacer").length
+}
+
 /** `TODAY · 02 OCT 2026`, sized to the 21-column period cell. */
 export function periodLabel(name: string, from: number, to: number) {
   const today = startOfLocalDay(to)
@@ -388,8 +395,8 @@ export function TokenUsageDashboard(props: { context: Plugin.Context; sessionID:
 
   // The panel spends one line per table on its header rule and one blank line before each
   // section after the first, so both height gates move down by every line the panel gains.
-  // Keeping them derived means a future section or rule cannot silently overflow the sidebar.
-  const compact = createMemo(() => dimensions().height < COMPACT_HEIGHT)
+  // The daily spacers are charged against the gate from the days actually rendered, so a
+  // quiet week that needs one spacer does not reserve room for the six a full week can use.
   const sessionLimit = createMemo(() => (dimensions().height < FULL_SESSIONS_HEIGHT ? 2 : MAX_SESSIONS))
 
   const sessions = createMemo(() => {
@@ -402,7 +409,9 @@ export function TokenUsageDashboard(props: { context: Plugin.Context; sessionID:
   })
 
   const days = createMemo(() => dayRows(snapshot().days?.activity, now()))
+  const dayLinesFor = createMemo(() => dayLines(days()))
   const dayMax = createMemo(() => days().reduce((max, day) => Math.max(max, day.tokens), 0))
+  const compact = createMemo(() => dimensions().height < COMPACT_HEIGHT + daySpacerCount(dayLinesFor()))
 
   const periods = createMemo(() => {
     const state = snapshot()
@@ -466,7 +475,7 @@ export function TokenUsageDashboard(props: { context: Plugin.Context; sessionID:
           <b>{formatDayHeader()}</b>
         </text>
         <box width={TABLE_WIDTH} border={["top"]} borderColor={theme.border.base} />
-        <For each={dayLines(days())}>
+        <For each={dayLinesFor()}>
           {(line) =>
             line.kind === "spacer" ? (
               <box height={DAY_SPACER} />
