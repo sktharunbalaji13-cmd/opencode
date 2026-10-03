@@ -155,8 +155,8 @@ describe("bar scaling", () => {
     expect(daySpacerCount(lines)).toBe(6)
     // The gate stays at its base; the six spacers are added from the rendered days instead of
     // being reserved up front, so a quiet week only pays for the spacer it actually has.
-    expect(COMPACT_HEIGHT).toBe(29)
-    expect(FULL_SESSIONS_HEIGHT).toBe(37)
+    expect(COMPACT_HEIGHT).toBe(31)
+    expect(FULL_SESSIONS_HEIGHT).toBe(39)
   })
 
   test("a quiet week pays for one spacer rather than the worst case", () => {
@@ -165,7 +165,7 @@ describe("bar scaling", () => {
       { key: "b", label: "03 OCT", tokens: 130_300_000 },
     ])
     expect(daySpacerCount(quiet)).toBe(1)
-    expect(COMPACT_HEIGHT + daySpacerCount(quiet)).toBe(30)
+    expect(COMPACT_HEIGHT + daySpacerCount(quiet)).toBe(32)
   })
 
   test("an all-zero week costs no spacer lines at all", () => {
@@ -589,23 +589,24 @@ describe("section spacing", () => {
     fixture("f", "Overflow two", 8_000, 3),
   ]
 
-  test("the height gates account for the header rules", () => {
-    expect(COMPACT_HEIGHT).toBe(29)
-    expect(FULL_SESSIONS_HEIGHT).toBe(37)
+  test("the height gates account for the rules and the spacers", () => {
+    expect(COMPACT_HEIGHT).toBe(31)
+    expect(FULL_SESSIONS_HEIGHT).toBe(39)
   })
 
-  test("runs the sections together, divided only by their heading and rule", async () => {
+  test("separates the sections with one blank line and nothing else", async () => {
     const lines = await panel(44, rows)
     expect(lines[0]).toBe("Token usage")
     expect(lines.join("\n")).toContain("Active sessions")
     expect(lines.join("\n")).toContain("Last 7 days")
-    // No blank line between sections: the bold heading and the rule under each header already
-    // divide them, which keeps the panel two lines shorter on a short sidebar.
-    expect(lines.filter((line) => line === "").length).toBe(0)
+    // Three tables rendered, so two boundaries and therefore exactly two blank lines.
+    expect(lines.filter((line) => line === "").length).toBe(2)
     const sessions = lines.findIndex((line) => line.includes("Active sessions"))
     const days = lines.findIndex((line) => line.includes("Last 7 days"))
-    expect(lines[sessions - 1]).not.toBe("")
-    expect(lines[days - 1]).not.toBe("")
+    expect(lines[sessions - 1]).toBe("")
+    expect(lines[sessions - 2]).not.toBe("")
+    expect(lines[days - 1]).toBe("")
+    expect(lines[days - 2]).not.toBe("")
   })
 
   test("keeps every table row at the sidebar width", async () => {
@@ -614,12 +615,14 @@ describe("section spacing", () => {
     }
   })
 
-  test("still hides the 7-day chart below the compact height", async () => {
+  test("takes the spacer away with the section it belongs to", async () => {
     const tall = await panel(COMPACT_HEIGHT + 2, rows)
     expect(tall.join("\n")).toContain("Last 7 days")
+    expect(tall.filter((line) => line === "").length).toBe(2)
 
     const short = await panel(COMPACT_HEIGHT - 2, rows)
     expect(short.join("\n")).not.toContain("Last 7 days")
+    expect(short.filter((line) => line === "").length).toBe(1)
   })
 
   test("still caps the session rows below the full height", async () => {
