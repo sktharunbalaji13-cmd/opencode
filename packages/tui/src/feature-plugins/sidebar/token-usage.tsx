@@ -47,20 +47,15 @@ const STATUS_DOT = "●"
 /** Exactly one blank line separates the sections. Never more: the sidebar is short. */
 const SECTION_SPACER = 1
 
-/** One blank line between two adjacent non-zero daily bars. */
-const DAY_SPACER = 1
-
-// One header rule per table, a spacer before the second and third sections, and the worst case
-// of six spacers inside a week where every day was active.
+// One header rule per table, and a spacer before the second and third sections.
 const TABLE_RULES = 3
 const SECTION_SPACERS = 2
-const DAY_SPACERS = DAY_COUNT - 1
 
 /** Below this height the 7-day chart hides. */
-export const COMPACT_HEIGHT = 26 + TABLE_RULES + SECTION_SPACERS + DAY_SPACERS
+export const COMPACT_HEIGHT = 26 + TABLE_RULES + SECTION_SPACERS
 
 /** Below this height the session list is capped at two rows instead of four. */
-export const FULL_SESSIONS_HEIGHT = 34 + TABLE_RULES + SECTION_SPACERS + DAY_SPACERS
+export const FULL_SESSIONS_HEIGHT = 34 + TABLE_RULES + SECTION_SPACERS
 
 type Column = { header: string; width: number; align: "left" | "right" }
 
@@ -105,13 +100,15 @@ export function usageTotal(tokens: Tokens | undefined) {
  * Horizontal bar scaled against the largest value in the displayed range. Length is the only
  * encoding, so a repeated middle dot can never read as punctuation instead of a bar.
  *
- * The full block keeps the bar solid and legible. It cannot separate itself: fonts draw every
- * filled block glyph at full cell height, so two bars in the same column touch and read as one
- * taller bar. `dayLines` spends a blank row on that instead, which is font-independent.
+ * The heavy horizontal rule is deliberate. Terminal rows have no vertical gap, so two solid
+ * block glyphs in the same column merge into what looks like one taller bar, and a half block
+ * does not help either because some fonts still draw it full height. A centred rule leaves
+ * whitespace above and below every stroke, which keeps adjacent days separate for the cost of
+ * no extra row and works the same way in any font.
  */
 export function bar(value: number, max: number, width = BAR_WIDTH) {
   if (!(value > 0) || !(max > 0)) return ""
-  return "█".repeat(Math.max(1, Math.round(Math.min(1, value / max) * width)))
+  return "━".repeat(Math.max(1, Math.round(Math.min(1, value / max) * width)))
 }
 
 export function statusLabel(status: "idle" | "running", outcome: SessionInfo["outcome"]) {
@@ -254,20 +251,6 @@ export function formatDayHeader() {
 /** One `DATE | USAGE | TOKENS` row. The bar scales against `max` from the same range. */
 export function formatDayRow(day: DayRow, max: number) {
   return tableRow(DAY_COLUMNS, [day.label, bar(day.tokens, max, BAR_WIDTH), statsNumber(day.tokens)])
-}
-
-export type DayLine = { kind: "day"; row: DayRow } | { kind: "spacer" }
-
-/**
- * Day rows interleaved with a blank row between two adjacent non-zero bars. Filled block glyphs
- * touch vertically because a terminal row has no leading, so without this two active days in a
- * row read as a single taller bar. Zero days already read as empty and never need a spacer.
- */
-export function dayLines(days: readonly DayRow[]): DayLine[] {
-  return days.flatMap((row, index) => {
-    const adjacent = index > 0 && row.tokens > 0 && days[index - 1]!.tokens > 0
-    return adjacent ? [{ kind: "spacer" as const }, { kind: "day" as const, row }] : [{ kind: "day" as const, row }]
-  })
 }
 
 /** `TODAY · 02 OCT 2026`, sized to the 21-column period cell. */
@@ -466,14 +449,8 @@ export function TokenUsageDashboard(props: { context: Plugin.Context; sessionID:
           <b>{formatDayHeader()}</b>
         </text>
         <box width={TABLE_WIDTH} border={["top"]} borderColor={theme.border.base} />
-        <For each={dayLines(days())}>
-          {(line) =>
-            line.kind === "spacer" ? (
-              <box height={DAY_SPACER} />
-            ) : (
-              <text fg={theme.text.muted}>{formatDayRow(line.row, dayMax())}</text>
-            )
-          }
+        <For each={days()}>
+          {(day) => <text fg={theme.text.muted}>{formatDayRow(day, dayMax())}</text>}
         </For>
       </Show>
     </box>
